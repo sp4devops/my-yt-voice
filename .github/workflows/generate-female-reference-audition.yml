@@ -15,6 +15,11 @@ on:
         description: "Reference duration in seconds"
         required: true
         default: "30"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/generate-female-reference-audition.yml"
+      - "generate_female_reference_audition.py"
 
 jobs:
   audition:
@@ -35,19 +40,18 @@ jobs:
 
       - name: Download reference audio
         env:
-          SOURCE_URL: ${{ inputs.source_url }}
-          START_SECONDS: ${{ inputs.start_seconds }}
-          DURATION_SECONDS: ${{ inputs.duration_seconds }}
+          SOURCE_URL: ${{ inputs.source_url || 'https://youtube.com/shorts/HGm6YpWulm8?si=DBp58O19P05Uglb4' }}
+          START_SECONDS: ${{ inputs.start_seconds || '0' }}
+          DURATION_SECONDS: ${{ inputs.duration_seconds || '30' }}
         run: |
           python -m pip install --upgrade pip yt-dlp
           mkdir -p reference
+
           yt-dlp             --no-playlist             --extract-audio             --audio-format wav             --audio-quality 0             --output "reference/source.%(ext)s"             "$SOURCE_URL"
 
           echo "Downloaded source:"
           ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 reference/source.wav
 
-          # Prepare a conservative speaker-reference file. We avoid aggressive
-          # denoising because metallic artifacts can damage speaker embeddings.
           ffmpeg -y             -ss "$START_SECONDS"             -t "$DURATION_SECONDS"             -i reference/source.wav             -af "highpass=f=65,lowpass=f=10500,dynaudnorm=f=150:g=5:p=0.9"             -ar 16000             -ac 1             reference/female-reference.wav
 
           echo "Prepared reference:"
