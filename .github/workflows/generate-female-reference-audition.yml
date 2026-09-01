@@ -47,7 +47,24 @@ jobs:
           python -m pip install --upgrade pip yt-dlp
           mkdir -p reference
 
-          yt-dlp             --no-playlist             --extract-audio             --audio-format wav             --audio-quality 0             --output "reference/source.%(ext)s"             "$SOURCE_URL"
+          download_audio() {
+            rm -f reference/source.*
+            yt-dlp               --no-playlist               --extract-audio               --audio-format wav               --audio-quality 0               --output "reference/source.%(ext)s"               "$@"               "$SOURCE_URL"
+          }
+
+          echo "Trying default YouTube client..."
+          if ! download_audio; then
+            echo "Default client blocked; trying Android client..."
+            if ! download_audio --extractor-args "youtube:player_client=android"; then
+              echo "Android client blocked; trying web_safari client..."
+              if ! download_audio --extractor-args "youtube:player_client=web_safari"; then
+                echo "web_safari blocked; trying TV client..."
+                download_audio --extractor-args "youtube:player_client=tv"
+              fi
+            fi
+          fi
+
+          test -f reference/source.wav
 
           echo "Downloaded source:"
           ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 reference/source.wav
