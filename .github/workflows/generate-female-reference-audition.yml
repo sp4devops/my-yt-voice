@@ -7,7 +7,7 @@ on:
     paths:
       - ".github/workflows/generate-female-reference-audition.yml"
       - "generate_female_reference_audition.py"
-      - "reference/female-reference.wav"
+      - "reference/upload8k/**"
 
 jobs:
   audition:
@@ -21,14 +21,37 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1 espeak-ng libasound-dev libportaudio2 libsqlite3-dev
 
-      - name: Verify committed reference
+      - name: Reconstruct uploaded reference
         run: |
-          test -f reference/female-reference.wav
+          set -euo pipefail
+          mkdir -p reference
+
+          cat reference/upload8k/part-*.b64 \
+            | tr -d '\n\r ' \
+            | base64 --decode \
+            > reference/female-reference.opus
+
+          echo "938d9083d33edf02d21e2f5265f0594894fbfee9ef15695373d702472db9db4d  reference/female-reference.opus" \
+            | sha256sum --check
+
+          # Decode the user's first 30 seconds into the format expected by the
+          # SpeechBrain speaker encoder. Keep processing conservative so the
+          # speaker identity is not damaged by aggressive denoising.
+          ffmpeg -y \
+            -i reference/female-reference.opus \
+            -af "highpass=f=65,lowpass=f=7800,dynaudnorm=f=150:g=3:p=0.9" \
+            -ar 16000 \
+            -ac 1 \
+            reference/female-reference.wav
+
           ffprobe -v error \
             -show_entries stream=sample_rate,channels \
             -show_entries format=duration \
             -of default=nw=1 \
             reference/female-reference.wav
+
+          test "$(find reference/upload8k -name 'part-*.b64' | wc -l)" -eq 9
+          test -s reference/female-reference.wav
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
@@ -50,6 +73,14 @@ jobs:
         run: |
           cat output/female-reference-audition/manifest.json
           find output/female-reference-audition -maxdepth 2 -type f -print
+
+      - name: Upload reconstructed reference
+        uses: actions/upload-artifact@v4
+        with:
+          name: female-reference-first-30-seconds
+          path: reference/female-reference.wav
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload female audition pack
         uses: actions/upload-artifact@v4
