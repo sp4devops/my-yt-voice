@@ -30,7 +30,10 @@ jobs:
         run: |
           git clone --depth 1 --branch MassiveScaleToucan https://github.com/DigitalPhonetics/IMS-Toucan.git vendor/IMS-Toucan
           python -m pip install --upgrade pip
-          grep -vE '^(gradio|pyqt5|pyqtgraph)~=' vendor/IMS-Toucan/requirements.txt > /tmp/toucan-runtime-requirements.txt
+          # This job is CPU-only. Install CPU PyTorch explicitly so pip does not
+          # download the much larger CUDA runtime bundled with the default Linux wheel.
+          pip install torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+          grep -vE '^(torch~=|torchaudio~=|gradio|pyqt5|pyqtgraph)~=' vendor/IMS-Toucan/requirements.txt > /tmp/toucan-runtime-requirements.txt
           pip install -r /tmp/toucan-runtime-requirements.txt
 
       - name: Generate audio
