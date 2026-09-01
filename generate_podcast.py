@@ -12,7 +12,7 @@ TOUCAN_DIR = ROOT / "vendor" / "IMS-Toucan"
 sys.path.insert(0, str(TOUCAN_DIR))
 
 from InferenceInterfaces.ToucanTTSInterface import ToucanTTSInterface
-from Modules.ControllabilityGAN.GAN import GanWrapper
+from Modules.ControllabilityGAN.wgan.resnet_init import init_resnet
 from huggingface_hub import hf_hub_download
 from Utility.storage_config import MODEL_DIR
 
@@ -23,7 +23,6 @@ OUT_DIR.mkdir(exist_ok=True)
 VOICE_CONFIG = {
     "female": {
         "seed": 14,
-        "sliders": [0.25, -0.15, 0.10, -0.10, 0.05, 0.10],
         "duration": 1.08,
         "pitch": 0.92,
         "energy": 0.90,
@@ -31,7 +30,6 @@ VOICE_CONFIG = {
     },
     "male": {
         "seed": 41,
-        "sliders": [-0.20, 0.10, -0.05, 0.10, -0.10, -0.05],
         "duration": 1.10,
         "pitch": 0.82,
         "energy": 0.88,
@@ -42,10 +40,31 @@ VOICE_CONFIG = {
 def silence(seconds: float) -> np.ndarray:
     return np.zeros(int(SR * seconds), dtype=np.float32)
 
-def make_voice_embedding(wgan: GanWrapper, seed: int, sliders):
-    wgan.set_latent(seed)
-    vec = torch.tensor(sliders, dtype=torch.float32)
-    return wgan.modify_embed(vec)
+def load_voice_generator(gan_path: str, device: str):
+    """Load only the pretrained speaker generator.
+
+    IMS-Toucan's GanWrapper also builds critic optimizers and LR schedulers that
+    are needed for GAN training, not inference. Loading the generator directly
+    keeps this headless CPU job small and avoids Triton/setuptools issues.
+    """
+    checkpoint = torch.load(gan_path, map_location="cpu")
+    generator, _ = init_resnet(checkpoint["model_parameters"])
+    state = {
+        key.replace("module.", ""): value
+        for key, value in checkpoint["generator_state_dict"].items()
+    }
+    generator.load_state_dict(state)
+    generator = generator.to(device).eval()
+    return generator, checkpoint["dataset_mean"], checkpoint["dataset_std"]
+
+
+def make_voice_embedding(generator, mean, std, seed: int, device: str):
+    torch.manual_seed(seed)
+    z = torch.randn((1, generator.z_dim), dtype=torch.float32) * 0.4
+    with torch.inference_mode():
+        embedding = generator(z.to(device)).cpu()
+    embedding = embedding * std.cpu().unsqueeze(0) + mean.cpu().unsqueeze(0)
+    return embedding
 
 def normalize_peak(wav: np.ndarray, peak: float = 0.92) -> np.ndarray:
     m = float(np.max(np.abs(wav))) if wav.size else 0.0
@@ -66,10 +85,11 @@ def main():
         repo_id="Flux9665/ToucanTTS",
         filename="embedding_gan.pt",
     )
-    wgan = GanWrapper(gan_path, num_cached_voices=60, device=device)
-
+    voice_generator, voice_mean, voice_std = load_voice_generator(gan_path, device)
     embeddings = {
-        name: make_voice_embedding(wgan, cfg["seed"], cfg["sliders"])
+        name: make_voice_embedding(
+            voice_generator, voice_mean, voice_std, cfg["seed"], device
+        )
         for name, cfg in VOICE_CONFIG.items()
     }
 
