@@ -1,0 +1,50 @@
+name: Generate Toucan podcast demo
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "generate_podcast.py"
+      - "script.json"
+      - ".github/workflows/generate-audio.yml"
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libsndfile1 espeak-ng libasound-dev libportaudio2 libsqlite3-dev
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install IMS-Toucan
+        run: |
+          git clone --depth 1 --branch MassiveScaleToucan https://github.com/DigitalPhonetics/IMS-Toucan.git vendor/IMS-Toucan
+          python -m pip install --upgrade pip
+          pip install -r vendor/IMS-Toucan/requirements.txt
+
+      - name: Generate audio
+        run: python generate_podcast.py
+
+      - name: Show output details
+        run: |
+          ls -lh output/
+          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 output/english-through-tamil-demo.wav
+
+      - name: Upload WAV
+        uses: actions/upload-artifact@v4
+        with:
+          name: english-through-tamil-demo
+          path: output/english-through-tamil-demo.wav
+          if-no-files-found: error
+          retention-days: 7
