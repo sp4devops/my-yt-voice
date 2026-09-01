@@ -2,24 +2,12 @@ name: Generate female Tamil reference audition
 
 on:
   workflow_dispatch:
-    inputs:
-      source_url:
-        description: "YouTube URL containing the synthetic Tamil female reference voice"
-        required: true
-        default: "https://youtube.com/shorts/HGm6YpWulm8?si=DBp58O19P05Uglb4"
-      start_seconds:
-        description: "Start point used for the reference clip"
-        required: true
-        default: "0"
-      duration_seconds:
-        description: "Reference duration in seconds"
-        required: true
-        default: "30"
   push:
     branches: [main]
     paths:
       - ".github/workflows/generate-female-reference-audition.yml"
       - "generate_female_reference_audition.py"
+      - "reference/female-reference.wav"
 
 jobs:
   audition:
@@ -33,51 +21,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1 espeak-ng libasound-dev libportaudio2 libsqlite3-dev
 
+      - name: Verify committed reference
+        run: |
+          test -f reference/female-reference.wav
+          ffprobe -v error \
+            -show_entries stream=sample_rate,channels \
+            -show_entries format=duration \
+            -of default=nw=1 \
+            reference/female-reference.wav
+
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Download reference audio
-        env:
-          SOURCE_URL: ${{ inputs.source_url || 'https://youtube.com/shorts/HGm6YpWulm8?si=DBp58O19P05Uglb4' }}
-          START_SECONDS: ${{ inputs.start_seconds || '0' }}
-          DURATION_SECONDS: ${{ inputs.duration_seconds || '30' }}
-        run: |
-          python -m pip install --upgrade pip yt-dlp
-          mkdir -p reference
-
-          download_audio() {
-            rm -f reference/source.*
-            yt-dlp               --no-playlist               --extract-audio               --audio-format wav               --audio-quality 0               --output "reference/source.%(ext)s"               "$@"               "$SOURCE_URL"
-          }
-
-          echo "Trying default YouTube client..."
-          if ! download_audio; then
-            echo "Default client blocked; trying Android client..."
-            if ! download_audio --extractor-args "youtube:player_client=android"; then
-              echo "Android client blocked; trying web_safari client..."
-              if ! download_audio --extractor-args "youtube:player_client=web_safari"; then
-                echo "web_safari blocked; trying TV client..."
-                download_audio --extractor-args "youtube:player_client=tv"
-              fi
-            fi
-          fi
-
-          test -f reference/source.wav
-
-          echo "Downloaded source:"
-          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 reference/source.wav
-
-          ffmpeg -y             -ss "$START_SECONDS"             -t "$DURATION_SECONDS"             -i reference/source.wav             -af "highpass=f=65,lowpass=f=10500,dynaudnorm=f=150:g=5:p=0.9"             -ar 16000             -ac 1             reference/female-reference.wav
-
-          echo "Prepared reference:"
-          ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 reference/female-reference.wav
-          ls -lh reference/
-
       - name: Install IMS-Toucan runtime
         run: |
           git clone --depth 1 --branch MassiveScaleToucan https://github.com/DigitalPhonetics/IMS-Toucan.git vendor/IMS-Toucan
+          python -m pip install --upgrade pip
           pip install torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cpu
           grep -vE '^(torch~=|torchaudio~=|gradio|pyqt5|pyqtgraph)~=' vendor/IMS-Toucan/requirements.txt > /tmp/toucan-runtime-requirements.txt
           pip install -r /tmp/toucan-runtime-requirements.txt
@@ -89,16 +50,6 @@ jobs:
         run: |
           cat output/female-reference-audition/manifest.json
           find output/female-reference-audition -maxdepth 2 -type f -print
-
-      - name: Upload extracted reference
-        uses: actions/upload-artifact@v4
-        with:
-          name: female-reference-source
-          path: |
-            reference/source.wav
-            reference/female-reference.wav
-          if-no-files-found: error
-          retention-days: 7
 
       - name: Upload female audition pack
         uses: actions/upload-artifact@v4
