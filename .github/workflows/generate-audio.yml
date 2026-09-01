@@ -30,7 +30,8 @@ jobs:
         run: |
           git clone --depth 1 --branch MassiveScaleToucan https://github.com/DigitalPhonetics/IMS-Toucan.git vendor/IMS-Toucan
           python -m pip install --upgrade pip
-          pip install -r vendor/IMS-Toucan/requirements.txt
+          grep -vE '^(gradio|pyqt5|pyqtgraph)~=' vendor/IMS-Toucan/requirements.txt > /tmp/toucan-runtime-requirements.txt
+          pip install -r /tmp/toucan-runtime-requirements.txt
 
       - name: Generate audio
         run: python generate_podcast.py
