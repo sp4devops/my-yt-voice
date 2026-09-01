@@ -14,7 +14,11 @@ sys.path.insert(0, str(TOUCAN_DIR))
 from InferenceInterfaces.ToucanTTSInterface import ToucanTTSInterface
 
 SR = 24000
-REFERENCE = ROOT / "reference" / "female-reference.wav"
+REFERENCES = [
+    ROOT / "reference" / "reconstructed" / "ref-0.wav",
+    ROOT / "reference" / "reconstructed" / "ref-1.wav",
+    ROOT / "reference" / "reconstructed" / "ref-2.wav",
+]
 RAW_DIR = ROOT / "output" / "female-reference-audition" / "raw"
 CLEAN_DIR = ROOT / "output" / "female-reference-audition" / "clean"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
@@ -25,8 +29,7 @@ TEXT = (
     "தவறு செய்தாலும் பரவாயில்லை. ஒவ்வொரு வாக்கியமாக நிதானமாக பயிற்சி செய்வோம்."
 )
 
-# Conservative settings: low creativity, controlled pitch/energy, slightly slower
-# delivery. The goal is stability and intelligibility, not dramatic expression.
+# Conservative settings: prioritize stable, clear Tamil over expressive variation.
 VARIANTS = [
     {"name": "A-steady",  "duration": 1.00, "pitch": 0.72, "energy": 0.78, "prosody": 0.00},
     {"name": "B-soft",    "duration": 1.04, "pitch": 0.78, "energy": 0.76, "prosody": 0.00},
@@ -43,8 +46,8 @@ def peak_normalize(wav: np.ndarray, peak: float = 0.86) -> np.ndarray:
 
 
 def clean_audio(src: Path, dst: Path):
-    # Gentle cleanup only: remove sub-bass/ultrasonic-ish content and normalize
-    # loudness. Avoid aggressive denoise that can create metallic artifacts.
+    # Gentle post-processing only. Keep a raw copy so we can distinguish
+    # synthesis artifacts from post-processing artifacts.
     cmd = [
         "ffmpeg", "-y", "-i", str(src),
         "-af",
@@ -55,33 +58,42 @@ def clean_audio(src: Path, dst: Path):
         "-ac", "1",
         str(dst),
     ]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        cmd,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def main():
-    if not REFERENCE.exists():
-        raise FileNotFoundError(
-            f"Missing {REFERENCE}. Add a clean 15-30 second, single-speaker, "
-            "rights-cleared female Tamil reference WAV before running this workflow."
-        )
+    missing = [str(p) for p in REFERENCES if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"Missing reconstructed reference files: {missing}")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
     tts = ToucanTTSInterface(device=device, language="tam")
-    # Toucan averages embeddings when given multiple files; for this audition we
-    # start with one clean reference and isolate synthesis settings.
-    tts.set_utterance_embedding(path_to_reference_audio=str(REFERENCE))
+
+    # Toucan extracts an ECAPA speaker embedding from every reference and averages
+    # them. Three separate 10-second clips cover the user's requested first 30 s
+    # while reducing sensitivity to one noisy or atypical passage.
+    tts.set_utterance_embedding(
+        path_to_reference_audio=[str(p) for p in REFERENCES]
+    )
 
     manifest = {
-        "reference": str(REFERENCE.relative_to(ROOT)),
+        "references": [str(p.relative_to(ROOT)) for p in REFERENCES],
+        "reference_span": "first 30 seconds, split into 3 x 10-second clips",
         "text": TEXT,
         "variants": [],
         "notes": [
             "Reference-audio speaker embedding; no synthetic GAN seed is used.",
+            "Toucan averages ECAPA embeddings from all three 10-second references.",
             "All audition text is pure Tamil to avoid code-switch phonemizer errors.",
             "Prosody creativity is near zero to reduce shakiness and unstable delivery.",
-            "Final output receives only gentle filtering/compression/loudness normalization.",
+            "Both raw and gently post-processed WAVs are included for comparison.",
         ],
     }
 

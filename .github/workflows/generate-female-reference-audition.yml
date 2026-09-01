@@ -7,7 +7,7 @@ on:
     paths:
       - ".github/workflows/generate-female-reference-audition.yml"
       - "generate_female_reference_audition.py"
-      - "reference/upload8k/**"
+      - "reference/ref16/**"
 
 jobs:
   audition:
@@ -21,37 +21,36 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1 espeak-ng libasound-dev libportaudio2 libsqlite3-dev
 
-      - name: Reconstruct uploaded reference
+      - name: Reconstruct and verify three references
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p reference
+          mkdir -p reference/reconstructed
 
-          cat reference/upload8k/part-*.b64 \
-            | tr -d '\n\r ' \
-            | base64 --decode \
-            > reference/female-reference.opus
+          expected=(
+            "e8c362b8c764b694223886d6dc5fca3421dda5a0ed91ae21bec550e760e5e028"
+            "c22e0f18102c8949694c93180845103e8d7d0608f6734c60315d615032811637"
+            "e29ec89d6788686b68764ecaf425ae027d7771e421918e69ddc990ddd7216d6b"
+          )
 
-          echo "938d9083d33edf02d21e2f5265f0594894fbfee9ef15695373d702472db9db4d  reference/female-reference.opus" \
-            | sha256sum --check
+          for seg in 0 1 2; do
+            count=$(find reference/ref16 -maxdepth 1 -name "seg${seg}-part*.b64" | wc -l)
+            test "$count" -eq 4
 
-          # Decode the user's first 30 seconds into the format expected by the
-          # SpeechBrain speaker encoder. Keep processing conservative so the
-          # speaker identity is not damaged by aggressive denoising.
-          ffmpeg -y \
-            -i reference/female-reference.opus \
-            -af "highpass=f=65,lowpass=f=7800,dynaudnorm=f=150:g=3:p=0.9" \
-            -ar 16000 \
-            -ac 1 \
-            reference/female-reference.wav
+            cat reference/ref16/seg${seg}-part*.b64               | tr -d '\n\r '               | base64 --decode               > reference/reconstructed/ref-${seg}.opus
 
-          ffprobe -v error \
-            -show_entries stream=sample_rate,channels \
-            -show_entries format=duration \
-            -of default=nw=1 \
-            reference/female-reference.wav
+            echo "${expected[$seg]}  reference/reconstructed/ref-${seg}.opus"               | sha256sum --check
 
-          test "$(find reference/upload8k -name 'part-*.b64' | wc -l)" -eq 9
-          test -s reference/female-reference.wav
+            ffmpeg -y               -i reference/reconstructed/ref-${seg}.opus               -ar 16000               -ac 1               reference/reconstructed/ref-${seg}.wav
+
+            test -s reference/reconstructed/ref-${seg}.wav
+
+            duration=$(ffprobe -v error               -show_entries format=duration               -of default=nw=1:nk=1               reference/reconstructed/ref-${seg}.wav)
+
+            awk -v d="$duration" 'BEGIN { exit !(d > 9.8 && d < 10.2) }'
+
+            ffprobe -v error               -show_entries stream=sample_rate,channels               -show_entries format=duration               -of default=nw=1               reference/reconstructed/ref-${seg}.wav
+          done
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
@@ -74,11 +73,11 @@ jobs:
           cat output/female-reference-audition/manifest.json
           find output/female-reference-audition -maxdepth 2 -type f -print
 
-      - name: Upload reconstructed reference
+      - name: Upload reconstructed references
         uses: actions/upload-artifact@v4
         with:
           name: female-reference-first-30-seconds
-          path: reference/female-reference.wav
+          path: reference/reconstructed/*.wav
           if-no-files-found: error
           retention-days: 7
 
