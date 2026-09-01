@@ -1,0 +1,48 @@
+name: Generate female Tamil reference audition
+
+on:
+  workflow_dispatch:
+
+jobs:
+  audition:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify reference clip
+        run: test -f reference/female-reference.wav
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libsndfile1 espeak-ng libasound-dev libportaudio2 libsqlite3-dev
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install IMS-Toucan runtime
+        run: |
+          git clone --depth 1 --branch MassiveScaleToucan https://github.com/DigitalPhonetics/IMS-Toucan.git vendor/IMS-Toucan
+          python -m pip install --upgrade pip
+          pip install torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+          grep -vE '^(torch~=|torchaudio~=|gradio|pyqt5|pyqtgraph)~=' vendor/IMS-Toucan/requirements.txt > /tmp/toucan-runtime-requirements.txt
+          pip install -r /tmp/toucan-runtime-requirements.txt
+
+      - name: Generate female audition
+        run: python generate_female_reference_audition.py
+
+      - name: Show outputs
+        run: |
+          cat output/female-reference-audition/manifest.json
+          find output/female-reference-audition -maxdepth 2 -type f -print
+
+      - name: Upload female audition pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: female-tamil-reference-audition
+          path: output/female-reference-audition/
+          if-no-files-found: error
+          retention-days: 7
